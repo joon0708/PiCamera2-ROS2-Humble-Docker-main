@@ -11,6 +11,14 @@ from picamera2 import Picamera2
 from picamera2.encoders import JpegEncoder
 from picamera2.outputs import FileOutput
 
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+
+qos_profile = QoSProfile(
+    reliability=ReliabilityPolicy.RELIABLE,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=10
+)
+
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Picamera2 ROS2 publishing demo with options")
 parser.add_argument("--resolution", type=str, help="Video resolution in WIDTHxHEIGHT format (default: 640x480)", default="640x480")
@@ -28,7 +36,7 @@ class CameraPublisher(Node):
         super().__init__('camera_publisher')
         
         # Create publisher
-        self.publisher = self.create_publisher(Image, args.topic, 10)
+        self.publisher = self.create_publisher(Image, args.topic, qos_profile)
         
         # Create timer for publishing at specified rate
         self.timer = self.create_timer(1.0/args.rate, self.publish_frame)
