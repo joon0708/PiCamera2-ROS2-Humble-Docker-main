@@ -64,36 +64,30 @@ class CameraPublisher(Node):
 
     def publish_frame(self):
         try:
-            frame = self.picam2.capture_array()  # RGB
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            frame_rgb = self.picam2.capture_array()  # ★ Picamera2는 RGB
 
-            # Edge (optional)
             if args.edge_detection:
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                frame = cv2.Canny(gray, 100, 200)
-                frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+                gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
+                edge = cv2.Canny(gray, 100, 200)
+                frame_rgb = cv2.cvtColor(edge, cv2.COLOR_GRAY2RGB)
 
-            # Downscale (optional)
             if args.downscale and args.downscale != 1.0:
-                frame = cv2.resize(
-                    frame, None, fx=args.downscale, fy=args.downscale,
-                    interpolation=cv2.INTER_AREA
-                )
+                frame_rgb = cv2.resize(frame_rgb, None, fx=args.downscale, fy=args.downscale, interpolation=cv2.INTER_AREA)
 
             if args.compressed:
+                # ★ JPEG로 보낼 때만 RGB→BGR (OpenCV imencode가 BGR 가정)
+                frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+
                 msg = CompressedImage()
                 msg.header.stamp = self.get_clock().now().to_msg()
                 msg.format = "jpeg"
-                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), int(np.clip(args.jpeg_quality, 1, 100))]
-                ok, buf = cv2.imencode(".jpg", frame, encode_param)
-                if not ok:
-                    return
-                msg.data = np.array(buf).tobytes()
+                ok, buf = cv2.imencode(".jpg", frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), int(np.clip(args.jpeg_quality, 1, 100))])
+                if not ok: return
+                msg.data = buf.tobytes()
                 self.pub.publish(msg)
             else:
-                # RAW (무거움: 네트워크가 버틸 때만)
-                ros_image = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
-                self.pub.publish(ros_image)
+                # ★ RAW는 진짜 RGB로
+                self.pub.publish(self.bridge.cv2_to_imgmsg(frame_rgb, encoding="rgb8"))
 
         except Exception as e:
             self.get_logger().error(f"publish_frame error: {e}")
