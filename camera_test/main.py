@@ -65,28 +65,24 @@ class CameraPublisher(Node):
         except Exception as e:
             self.get_logger().warn(f"AWB mode not supported: {e}")
         
-        # Add AE mode if supported (skip for now as it's causing issues)
-        # try:
-        #     ae_mode = self._get_ae_mode(args.ae_mode)
-        #     controls["AeMode"] = ae_mode
-        # except Exception as e:
-        #     self.get_logger().warn(f"AE mode not supported: {e}")
-        
-        # Add image quality controls
-        try:
-            controls["Saturation"] = args.saturation
-        except Exception as e:
-            self.get_logger().warn(f"Saturation control not supported: {e}")
-            
-        try:
-            controls["Contrast"] = args.contrast
-        except Exception as e:
-            self.get_logger().warn(f"Contrast control not supported: {e}")
-            
-        try:
-            controls["Brightness"] = args.brightness
-        except Exception as e:
-            self.get_logger().warn(f"Brightness control not supported: {e}")
+        # Add image quality controls (only if they differ from defaults)
+        if args.saturation != 1.0:
+            try:
+                controls["Saturation"] = args.saturation
+            except Exception as e:
+                self.get_logger().warn(f"Saturation control not supported: {e}")
+                
+        if args.contrast != 1.0:
+            try:
+                controls["Contrast"] = args.contrast
+            except Exception as e:
+                self.get_logger().warn(f"Contrast control not supported: {e}")
+                
+        if args.brightness != 1.0:
+            try:
+                controls["Brightness"] = args.brightness
+            except Exception as e:
+                self.get_logger().warn(f"Brightness control not supported: {e}")
         
         cfg = self.picam2.create_video_configuration(
             main={"size": (W, H), "format": "RGB888"},
