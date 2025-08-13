@@ -131,29 +131,32 @@ class CameraPublisher(Node):
 
     def publish_frame(self):
         try:
-            # 1) Capture: Picamera2 returns RGB (confirmed!)
-            frame_rgb = self.picam2.capture_array()  # RGB
+            # 1) Capture: Picamera2 returns BGR (confirmed by debug test!)
+            frame_bgr = self.picam2.capture_array()  # BGR
 
-            # 2) Optional edge detection (keep RGB)
+            # 2) Convert BGR to RGB for ROS publishing
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+
+            # 3) Optional edge detection (keep RGB)
             if args.edge_detection:
                 gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
                 edge = cv2.Canny(gray, 100, 200)
                 frame_rgb = cv2.cvtColor(edge, cv2.COLOR_GRAY2RGB)
 
-            # 3) Optional downscale
+            # 4) Optional downscale
             if args.downscale and args.downscale != 1.0:
                 frame_rgb = cv2.resize(frame_rgb, None, fx=args.downscale, fy=args.downscale, interpolation=cv2.INTER_AREA)
 
-            # 4) Optional debug color overlay (to verify R/B correctness)
+            # 5) Optional debug color overlay (to verify R/B correctness)
             if args.debug_colors:
                 # RGB space overlays
                 cv2.rectangle(frame_rgb, (10, 10), (110, 60), (255,   0,   0), -1)  # RED (RGB)
                 cv2.rectangle(frame_rgb, (120,10), (220, 60), (  0,   0, 255), -1)  # BLUE (RGB)
 
-            # 5) Publish RAW (exact RGB)
+            # 6) Publish RAW (exact RGB)
             self.pub_raw.publish(self.bridge.cv2_to_imgmsg(frame_rgb, encoding="rgb8"))
 
-            # 6) Publish Compressed if enabled (convert to BGR for JPEG)
+            # 7) Publish Compressed if enabled (convert back to BGR for JPEG)
             if self.pub_comp is not None:
                 frame_bgr_for_jpeg = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
                 if args.debug_colors:
