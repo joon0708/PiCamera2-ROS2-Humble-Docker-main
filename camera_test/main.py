@@ -54,15 +54,43 @@ class CameraPublisher(Node):
 
         # Camera
         self.picam2 = Picamera2()
+        
+        # Build controls dictionary with only supported controls
+        controls = {}
+        
+        # Add AWB mode if supported
+        try:
+            awb_mode = self._get_awb_mode(args.awb_mode)
+            controls["AwbMode"] = awb_mode
+        except Exception as e:
+            self.get_logger().warn(f"AWB mode not supported: {e}")
+        
+        # Add AE mode if supported (skip for now as it's causing issues)
+        # try:
+        #     ae_mode = self._get_ae_mode(args.ae_mode)
+        #     controls["AeMode"] = ae_mode
+        # except Exception as e:
+        #     self.get_logger().warn(f"AE mode not supported: {e}")
+        
+        # Add image quality controls
+        try:
+            controls["Saturation"] = args.saturation
+        except Exception as e:
+            self.get_logger().warn(f"Saturation control not supported: {e}")
+            
+        try:
+            controls["Contrast"] = args.contrast
+        except Exception as e:
+            self.get_logger().warn(f"Contrast control not supported: {e}")
+            
+        try:
+            controls["Brightness"] = args.brightness
+        except Exception as e:
+            self.get_logger().warn(f"Brightness control not supported: {e}")
+        
         cfg = self.picam2.create_video_configuration(
             main={"size": (W, H), "format": "RGB888"},
-            controls={
-                "AwbMode": self._get_awb_mode(args.awb_mode),
-                "AeMode": self._get_ae_mode(args.ae_mode),
-                "Saturation": args.saturation,
-                "Contrast": args.contrast,
-                "Brightness": args.brightness,
-            }
+            controls=controls
         )
         self.picam2.configure(cfg)
         self.picam2.start()
