@@ -4,104 +4,117 @@ import logging
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from sensor_msgs.msg import Image, CompressedImage
 from cv_bridge import CvBridge
 
 from picamera2 import Picamera2
-from picamera2.encoders import JpegEncoder
-from picamera2.outputs import FileOutput
 
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-
-qos_profile = QoSProfile(
-    reliability=ReliabilityPolicy.RELIABLE,
-    history=HistoryPolicy.KEEP_LAST,
-    depth=10
-)
-
-# Parse command line arguments
-parser = argparse.ArgumentParser(description="Picamera2 ROS2 publishing demo with options")
-parser.add_argument("--resolution", type=str, help="Video resolution in WIDTHxHEIGHT format (default: 640x480)", default="640x480")
+# ----------------- CLI -----------------
+parser = argparse.ArgumentParser(description="Picamera2 ROS2 publisher (bandwidth-friendly)")
+parser.add_argument("--resolution", type=str, default="640x480", help="WIDTHxHEIGHT (e.g., 640x480)")
+parser.add_argument("--rate", type=float, default=10.0, help="Publish rate (Hz)")
+parser.add_argument("--topic", type=str, default="/camera/image_raw", help="Topic base name")
 parser.add_argument("--edge_detection", action="store_true", help="Enable edge detection")
-parser.add_argument("--topic", type=str, help="ROS topic name for publishing images (default: /camera/image_raw)", default="/camera/image_raw")
-parser.add_argument("--rate", type=float, help="Publishing rate in Hz (default: 10.0)", default=10.0)
+parser.add_argument("--compressed", action="store_true", help="Publish CompressedImage (JPEG)")
+parser.add_argument("--jpeg_quality", type=int, default=80, help="JPEG quality 1-100 (default 80)")
+parser.add_argument("--downscale", type=float, default=1.0, help="Resize factor (e.g., 0.5 halves W/H)")
+parser.add_argument("--best_effort", action="store_true", help="Use BEST_EFFORT QoS (good for Wi-Fi)")
 args = parser.parse_args()
 
-# Parse resolution
-resolution = tuple(map(int, args.resolution.split('x')))
+W, H = map(int, args.resolution.split("x"))
 
+# ----------------- QoS -----------------
+qos_profile = QoSProfile(
+    reliability=(ReliabilityPolicy.BEST_EFFORT if args.best_effort else ReliabilityPolicy.RELIABLE),
+    history=HistoryPolicy.KEEP_LAST,
+    depth=5,
+)
 
 class CameraPublisher(Node):
     def __init__(self):
-        super().__init__('camera_publisher')
-        
-        # Create publisher
-        self.publisher = self.create_publisher(Image, args.topic, qos_profile)
-        
-        # Create timer for publishing at specified rate
-        self.timer = self.create_timer(1.0/args.rate, self.publish_frame)
-        
-        # Initialize camera
+        super().__init__("camera_publisher")
+
+        # Publisher (raw or compressed)
+        if args.compressed:
+            self.pub = self.create_publisher(CompressedImage, args.topic + "/compressed", qos_profile)
+        else:
+            self.pub = self.create_publisher(Image, args.topic, qos_profile)
+
+        # Timer
+        self.timer = self.create_timer(max(1.0/args.rate, 1e-3), self.publish_frame)
+
+        # Camera
         self.picam2 = Picamera2()
-        self.picam2.configure(self.picam2.create_video_configuration(main={"size": resolution}))
+        cfg = self.picam2.create_video_configuration(
+            main={"size": (W, H), "format": "RGB888"}
+        )
+        self.picam2.configure(cfg)
         self.picam2.start()
-        
-        # Initialize CV bridge for converting between OpenCV and ROS images
+
+        # Bridge
         self.bridge = CvBridge()
-        
-        self.get_logger().info(f'Camera publisher started. Publishing to topic: {args.topic}')
-        self.get_logger().info(f'Resolution: {resolution[0]}x{resolution[1]}')
-        self.get_logger().info(f'Publishing rate: {args.rate} Hz')
-        if args.edge_detection:
-            self.get_logger().info('Edge detection enabled')
+
+        self.get_logger().info(
+            f"Publishing to: {self.pub.topic_name} | res={W}x{H} | rate={args.rate}Hz | "
+            f"{'COMPRESSED(JPEG)' if args.compressed else 'RAW(bgr8)'} | "
+            f"QoS={'BEST_EFFORT' if args.best_effort else 'RELIABLE'} | "
+            f"downscale={args.downscale} | q={args.jpeg_quality}"
+        )
 
     def publish_frame(self):
         try:
-            # Capture frame from camera
-            frame = self.picam2.capture_array()
-            
-            # Convert from RGBA to BGR (remove alpha channel)
-            if frame.shape[2] == 4:  # RGBA
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
-            elif frame.shape[2] == 3:  # RGB
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            
-            # Apply edge detection if enabled
+            frame = self.picam2.capture_array()  # RGB
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+            # Edge (optional)
             if args.edge_detection:
-                # Convert to grayscale for edge detection
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                # Apply edge detection
                 frame = cv2.Canny(gray, 100, 200)
-                # Convert back to BGR for proper display
                 frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-            
-            # Convert OpenCV image to ROS Image message
-            ros_image = self.bridge.cv2_to_imgmsg(frame, "bgr8")
-            
-            # Publish the image
-            self.publisher.publish(ros_image)
-            
+
+            # Downscale (optional)
+            if args.downscale and args.downscale != 1.0:
+                frame = cv2.resize(
+                    frame, None, fx=args.downscale, fy=args.downscale,
+                    interpolation=cv2.INTER_AREA
+                )
+
+            if args.compressed:
+                msg = CompressedImage()
+                msg.header.stamp = self.get_clock().now().to_msg()
+                msg.format = "jpeg"
+                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), int(np.clip(args.jpeg_quality, 1, 100))]
+                ok, buf = cv2.imencode(".jpg", frame, encode_param)
+                if not ok:
+                    return
+                msg.data = np.array(buf).tobytes()
+                self.pub.publish(msg)
+            else:
+                # RAW (무거움: 네트워크가 버틸 때만)
+                ros_image = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
+                self.pub.publish(ros_image)
+
         except Exception as e:
-            self.get_logger().error(f'Error publishing frame: {str(e)}')
+            self.get_logger().error(f"publish_frame error: {e}")
 
     def __del__(self):
-        if hasattr(self, 'picam2'):
+        try:
             self.picam2.stop()
+        except Exception:
+            pass
 
-
-def main(args=None):
-    rclpy.init(args=args)
-    
+def main(argv=None):
+    rclpy.init(args=argv)
     try:
-        camera_publisher = CameraPublisher()
-        rclpy.spin(camera_publisher)
+        node = CameraPublisher()
+        rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        logging.error(f'Error in main: {str(e)}')
+        logging.error(f"Error in main: {e}")
     finally:
         rclpy.shutdown()
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
