@@ -134,24 +134,25 @@ class CameraPublisher(Node):
             # 1) Capture: Picamera2 returns BGR (confirmed by debug test!)
             frame_bgr = self.picam2.capture_array()  # BGR
 
-            # 2) Convert BGR to RGB for ROS publishing
+            # 2) Debug: Add color boxes to original BGR frame to check actual camera output
+            if args.debug_colors:
+                # BGR space overlays on original frame (before conversion)
+                cv2.rectangle(frame_bgr, (10, 10), (110, 60), (0,   0, 255), -1)  # RED (BGR)
+                cv2.rectangle(frame_bgr, (120,10), (220, 60), (255, 0,   0), -1)  # BLUE (BGR)
+                cv2.rectangle(frame_bgr, (230,10), (330, 60), (0, 255,   0), -1)  # GREEN (BGR)
+
+            # 3) Convert BGR to RGB for ROS publishing
             frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 
-            # 3) Optional edge detection (keep RGB)
+            # 4) Optional edge detection (keep RGB)
             if args.edge_detection:
                 gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
                 edge = cv2.Canny(gray, 100, 200)
                 frame_rgb = cv2.cvtColor(edge, cv2.COLOR_GRAY2RGB)
 
-            # 4) Optional downscale
+            # 5) Optional downscale
             if args.downscale and args.downscale != 1.0:
                 frame_rgb = cv2.resize(frame_rgb, None, fx=args.downscale, fy=args.downscale, interpolation=cv2.INTER_AREA)
-
-            # 5) Optional debug color overlay (to verify R/B correctness)
-            if args.debug_colors:
-                # RGB space overlays
-                cv2.rectangle(frame_rgb, (10, 10), (110, 60), (255,   0,   0), -1)  # RED (RGB)
-                cv2.rectangle(frame_rgb, (120,10), (220, 60), (  0,   0, 255), -1)  # BLUE (RGB)
 
             # 6) Publish RAW (exact RGB)
             self.pub_raw.publish(self.bridge.cv2_to_imgmsg(frame_rgb, encoding="rgb8"))
@@ -159,11 +160,6 @@ class CameraPublisher(Node):
             # 7) Publish Compressed if enabled (convert back to BGR for JPEG)
             if self.pub_comp is not None:
                 frame_bgr_for_jpeg = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-                if args.debug_colors:
-                    # BGR space overlays (left red, right blue)
-                    cv2.rectangle(frame_bgr_for_jpeg, (230,10), (330, 60), (0,   0, 255), -1)  # RED (BGR)
-                    cv2.rectangle(frame_bgr_for_jpeg, (340,10), (440, 60), (255, 0,   0), -1)  # BLUE (BGR)
-
                 msg = CompressedImage()
                 msg.header.stamp = self.get_clock().now().to_msg()
                 msg.format = "jpeg"
